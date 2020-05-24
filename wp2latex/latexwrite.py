@@ -8,7 +8,7 @@ To-dos:
 - fix <span> text options
 - add another fig referencing option not requiring figcounter
 
-Author: R. L. Bailey (GitHub bairaelyn), April 2020.
+Author: R. L. Bailey (GitHub bairaelyn), April-May 2020.
 """
 
 import subprocess
@@ -17,7 +17,13 @@ import re
 from datetime import datetime
 import pytz
 
+try:
+    import get_image_size
+except:
+    print("get_image_size not installed. Image sizes may not be read correctly.")
+
 nl = "\n"
+horizontal_rule = '\\noindent\\rule{\\textwidth}{0.4pt}\\vspace{2.5mm}'
 
 # -------------------------------------------------------------------
 # GENERAL LATEX TEXT FUNCTIONS
@@ -28,8 +34,8 @@ def date_string(date):
         suffix = "th"
     else:
         suffix = ["st", "nd", "rd"][date.day % 10 - 1]
-    datef = datetime.strftime(date, "%d{} %b %Y, %H:%M.".format(suffix))
-    datestr = "\\emph{Published on "+datef+"}"+nl
+    datef = datetime.strftime(date, "{}{} %b %Y, %H:%M.".format(date.day, suffix))
+    datestr = "\\textit{Published on "+datef+"}"+nl
 
     return datestr
 
@@ -44,24 +50,43 @@ def latex_preamble(f, title, author, abstract):
     f.write("\\documentclass[10pt,twoside,openright]{memoir}"+nl)
     f.write("\\usepackage{graphicx}"+nl)
     f.write("\\usepackage{hyperref}"+nl)
+    f.write("\\usepackage{eurosym}"+nl)
     f.write("\\usepackage{subcaption}"+nl)
     f.write("\\usepackage{cleveref}"+nl)
-    f.write("%\\captionsetup[figure]{labelsep=period}"+nl)
     f.write("\\captionsetup[subfigure]{subrefformat=simple,labelformat=simple}"+nl)
-    f.write("%\\captionsetup[subfigure]{labelformat=simple} % default is 'parens'"+nl)
     f.write("\\renewcommand\\thesubfigure{(\\alph{subfigure})}"+nl)
-    f.write("\\usepackage{eurosym}"+nl)
-    f.write("%\\usepackage[paperwidth=4.25in, paperheight=6.875in,bindingoffset=.75in]{geometry}"+nl)
     f.write("\\setlrmarginsandblock{0.12\\paperwidth}{*}{1}"+nl)
     f.write("\\setulmarginsandblock{0.15\\paperwidth}{*}{1}"+nl)
     f.write("\\checkandfixthelayout"+nl)
     f.write(nl)
-    f.write("\\pagestyle{plain}"+nl)
+    f.write("\\pagestyle{ruled}"+nl)
+    f.write(nl)
+    f.write("% Makes a fancier chapter style:"+nl)
+    f.write("\\setlength\\midchapskip{10pt}"+nl)
+    f.write("  \\makechapterstyle{VZ23}{"+nl)
+    f.write("  \\renewcommand\\chapternamenum{}"+nl)
+    f.write("  \\renewcommand\\printchaptername{}"+nl)
+    f.write("  \\renewcommand\\chapnumfont{\\Huge\\bfseries\\centering}"+nl)
+    f.write("  \\renewcommand\\chaptitlefont{\\Huge\\scshape\\centering}"+nl)
+    f.write("  \\renewcommand\\afterchapternum{%"+nl)
+    f.write("    \\par\\nobreak\\vskip\\midchapskip\\hrule\\vskip\\midchapskip}"+nl)
+    f.write("  \\renewcommand\\printchapternonum{%"+nl)
+    f.write("    \\vphantom{\\chapnumfont \\thechapter}"+nl)
+    f.write("    \\par\\nobreak\\vskip\\midchapskip\\hrule\\vskip\\midchapskip}"+nl)
+    f.write("}"+nl)
+    f.write("\\chapterstyle{VZ23}"+nl)
+    f.write(nl)
+    f.write("% Removes section numberings:"+nl)
+    f.write("\\setcounter{secnumdepth}{0}"+nl)
+    f.write(nl)
+    f.write("% Removes abstract title:"+nl)
+    f.write("\\renewcommand{\\abstractname}{\\vspace{-\\baselineskip}}"+nl)
     f.write(nl)
     f.write("\\begin{document}"+nl)
     f.write(nl)
-    f.write("\\title{"+title+"}"+nl)
-    f.write("\\author{"+author+"}"+nl)
+    f.write("\\font\\myfont=cmr12 at 35pt"+nl)
+    f.write("\\title{{\\myfont "+title+"}}"+nl)
+    f.write("\\author{\\textit{"+author+"}}"+nl)
     f.write(nl)
     f.write("\\maketitle"+nl)
     f.write(nl)
@@ -69,6 +94,7 @@ def latex_preamble(f, title, author, abstract):
     f.write(abstract+nl)
     f.write("\\end{abstract}"+nl)
     f.write(nl)
+    f.write("\\newpage"+nl)
     f.write("\\tableofcontents"+nl)
     f.write(nl)
 
@@ -88,7 +114,7 @@ def html_tags_to_latex(textbody):
     """
     for s in re.finditer('<em>(.+?)</em>', textbody):
         emphstr = s.group(0)
-        textbody = textbody.replace(emphstr, "\\emph{"+s.group(1)+"}")
+        textbody = textbody.replace(emphstr, "\\textit{"+s.group(1)+"}")
     for s in re.finditer('<i>(.+?)</i>', textbody):
         emphstr = s.group(0)
         textbody = textbody.replace(emphstr, "\\emph{"+s.group(1)+"}")
@@ -105,7 +131,7 @@ def html_tags_to_latex(textbody):
     return textbody
 
 
-def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layout='optimal'):
+def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layout='optimal', wp_blocks=False):
     """Replaces image references in textbody with LaTeX figure/subfigure code.
     Original image string looks like this:
     <img class="alignnone size-full wp-image-24" src="http://assets.mysite.com/img/dsc04657-edited.jpg" 
@@ -144,26 +170,39 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
 
     landscape = [-1]
     replacestr = {}
-    allimgstr, fignums, figpaths, orient = [], [], [], []
-    str_fig, figpath = '', ''
+    allimgstr, fignums, figpaths, figcaptions, orient = [], [], [], [], []
+    str_fig, figpath, figcaption = '', '', ''
     lastimgstr = '----'
     figsetup = []
+    if wp_blocks == False:
+        re_img_str = '<img(.+?)>'
+    else:
+        re_img_str = '<!-- wp:image (.+?)-->\n(.+?)\n<!-- /wp:image -->'
 
-    for s in re.finditer('<img(.+?)>', textbody):
-        laststr, lastfigpath = str_fig, figpath
+    for s in re.finditer(re_img_str, textbody):
+        laststr, lastfigpath, lastfigcaption = str_fig, figpath, figcaption
         img_exists = False
         try:
-            n = re.search('src="http://assets.mysite.com/img/(.+?)"', s.group(0)).group(1)
+            n = re.search('src="(.+?)"', s.group(0)).group(1)
+            nfile = os.path.split(n)[-1].split('?')[0]
+            figpath = [x for x in img_paths if nfile in x][0]
             img_exists = True
         except:
-            print("Problem with image regex: {}".format(s.group(0)))
+            print("ERROR finding image regex: {}".format(s.group(0)))
             replacestr[s.group(0)] = ""
         if img_exists:
             allimgstr.append(s.group(0))
             fignums.append(figcounter)
-            figpath = [x for x in img_paths if n in x][0]
             figpaths.append(figpath)
-            figwidth, figheight = jpeg_res(figpath)
+            try:
+                figwidth, figheight = get_image_size.get_image_size(figpath)
+            except:
+                figwidth, figheight = jpeg_res(figpath)
+            try:
+                figcaption = re.search('<figcaption>(.+?)</figcaption>', s.group(0)).group(1)
+            except: # no captions
+                figcaption = ''
+            figcaptions.append(figcaption)
 
             # SINGLE FIGURE LAYOUT
             # --------------------
@@ -172,7 +211,7 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
                     sfigtw = fws[0]
                 else:
                     sfigtw = fws[1]
-                str_fig = _include_figure(figcounter, figpath, figwidth=sfigtw)
+                str_fig = _include_figure(figpath, figcounter, figcaption, figwidth=sfigtw)
                 figsetup.append(1)
 
             # OPTIMAL/PAIRED FIGURE LAYOUT
@@ -190,7 +229,8 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
                         figtw = '0.45'
                     else:
                         figtw = fws[1]
-                    str_fig = _include_subfigures(lastfigpath, figpath, figcounter-1, figcounter, figtw, figtw)
+                    str_fig = _include_subfigures(lastfigpath, figpath, figcounter-1, figcounter,
+                                                  lastfigcaption, figcaption, figtw, figtw)
                     landscape[-1] = -1
                     if nl+nl+lastimgstr in textbody:
                         replacestr[nl+nl+lastimgstr] = " [\\ref{fig:"+str(figcounter-1)+"}]"
@@ -203,7 +243,7 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
                         sfigtw = fws[0]
                     else:
                         sfigtw = fws[1]
-                    str_fig = _include_figure(figcounter, figpath, figwidth=sfigtw)
+                    str_fig = _include_figure(figpath, figcounter, figcaption, figwidth=sfigtw)
                     figsetup.append(1)
 
             # Defining the fig strings to replace img strings with:
@@ -227,7 +267,8 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
                     else:
                         figtw1, figtw2 = fws[1], fws[0]
                     #print('********', fignum, figpaths[ifig], figpaths[ifig+1], fignums[ifig], ifig)
-                    str_fig = _include_subfigures(figpaths[ifig], figpaths[ifig+1], fignums[ifig], fignums[ifig+1], figtw1, figtw2)
+                    str_fig = _include_subfigures(figpaths[ifig], figpaths[ifig+1], fignums[ifig], fignums[ifig+1],
+                                                  figcaptions[ifig], figcaptions[ifig+1], figtw1, figtw2)
                     if nl+nl+lastimgstr in textbody:
                         replacestr[nl+nl+allimgstr[ifig]] = " [\\ref{fig:"+str(fignums[ifig])+"}]"
                     else:
@@ -258,30 +299,30 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
     return textbody, figcounter
 
 
-def _include_figure(figcounter, figpath, figwidth=0.5):
+def _include_figure(figpath, fignum, figcaption, figwidth=0.5):
     """Fills LaTeX code for figure/image inclusion."""
     str_fig =  "\\begin{figure}"+nl
     str_fig += "    \\centering"+nl
     str_fig += "    \\includegraphics[width="+str(figwidth)+"\\textwidth]{"+figpath+"}"+nl
-    str_fig += "    \\caption{"+"}"+nl
-    str_fig += "    \\label{fig:"+str(figcounter)+"}"+nl
+    str_fig += "    \\caption{"+figcaption+"}"+nl
+    str_fig += "    \\label{fig:"+str(fignum)+"}"+nl
     str_fig += "\\end{figure}"
 
     return str_fig
 
 
-def _include_subfigures(figpath1, figpath2, fignum1, fignum2, fw1, fw2):
+def _include_subfigures(figpath1, figpath2, fignum1, fignum2, figcaption1, figcaption2, fw1, fw2):
     """Fills LaTeX code for figure with two subfigures."""
     str_fig =  "\\begin{figure}[htbp!]"+nl
     str_fig += "  \\centering"+nl
-    str_fig += "  \\begin{subfigure}[b]{"+fw1+"\\textwidth}"+nl
+    str_fig += "  \\begin{subfigure}[t]{"+fw1+"\\textwidth}"+nl
     str_fig += "    \\includegraphics[width=\\textwidth]{"+figpath1+"}"+nl
-    str_fig += "    \\caption{"+"}"+nl
+    str_fig += "    \\caption{"+figcaption1+"}"+nl
     str_fig += "    \\label{fig:"+str(fignum1)+"}"+nl
     str_fig += "  \\end{subfigure}"+nl
-    str_fig += "  \\begin{subfigure}[b]{"+fw2+"\\textwidth}"+nl
+    str_fig += "  \\begin{subfigure}[t]{"+fw2+"\\textwidth}"+nl
     str_fig += "    \\includegraphics[width=\\textwidth]{"+figpath2+"}"+nl
-    str_fig += "    \\caption{"+"}"+nl
+    str_fig += "    \\caption{"+figcaption2+"}"+nl
     str_fig += "    \\label{fig:"+str(fignum2)+"}"+nl
     str_fig += "  \\end{subfigure}"+nl
     str_fig += "  \\caption{"+nl
@@ -326,11 +367,15 @@ def post_to_latex(f, post, figcounter, media_archive='', fig_layout='optimal', e
     if '<br>' in newbody:
         print("Something's gone very wrong. Be worried, be very worried.")
     # Replace horizontal rules
-    newbody = newbody.replace('<hr />', '')#\\rule{\\textwidth}{0.4pt}')
-    newbody = newbody.replace('<hr>', '\\noindent\\rule{\\textwidth}{0.4pt}\\vspace{2.5mm}')
+    newbody = newbody.replace('<hr />', '')
+    newbody = newbody.replace('<hr>', horizontal_rule)
+    wp_blocks = False
+    if '<!-- wp:paragraph -->' in newbody:
+        wp_blocks = True
+        newbody = wp_blocks_to_latex(newbody)
     # Fix references to images:
     if not media_archive == '':
-        newbody, figcounter = image_to_latex(newbody, media_archive, figcounter, layout=fig_layout)
+        newbody, figcounter = image_to_latex(newbody, media_archive, figcounter, layout=fig_layout, wp_blocks=wp_blocks)
     # Fix URLs and symbols:
     newbody = urls_to_latex(newbody)
     newbody = symbols_to_latex(newbody)
@@ -341,6 +386,8 @@ def post_to_latex(f, post, figcounter, media_archive='', fig_layout='optimal', e
     newbody = newbody.replace("</ul>", "\\end{itemize}")
     # Remove excessive newlines, but never less than two:
     newbody = newbody.replace(3*nl, 2*nl).replace(3*nl, 2*nl).replace(3*nl, 2*nl)
+    # Fix single-line picture references:
+    newbody = newbody.replace(nl+nl+'[\\ref{fig', '[\\ref{fig')
 
     # Finally write the adjusted text body:
     f.write("\\section{"+post.title+"}"+nl)
@@ -388,6 +435,29 @@ def urls_to_latex(textbody):
         des = re.search('>(.+?)<', s.group(0)).group(1)
         #str_url = "\\begin{center}"+nl+"\\href{"+url+"}{"+des+"}"+nl+"\\end{center}"+nl
         str_url = "\\href{"+url+"}{"+des+"}"+nl
+        textbody = textbody.replace(s.group(0), str_url)
+
+    return textbody
+
+
+def wp_blocks_to_latex(textbody):
+
+    # Paragraph block:
+    textbody = textbody.replace('<!-- wp:paragraph -->\n<p></p>\n<!-- /wp:paragraph -->', '')
+    for s in re.finditer('<!-- wp:paragraph(.+?)-->\n<(.+?)>(.+?)</p>\n<!-- /wp:paragraph -->', textbody):
+        parstr = s.group(0)
+        textbody = textbody.replace(parstr, s.group(3))
+    # List:
+    for s in re.finditer('<!-- wp:list(.+?)-->\n(.+?)\n<!-- /wp:list -->', textbody):
+        liststr = s.group(0)
+        textbody = textbody.replace(liststr, s.group(2))
+    # Horizontal rule:
+    textbody = textbody.replace('<!-- wp:separator -->\n<hr class="wp-block-separator" />\n<!-- /wp:separator -->',
+                                horizontal_rule)
+    # Video block:
+    for s in re.finditer('<!-- wp:video(.+?)-->\n(.+?)\n<!-- /wp:video -->', textbody):
+        link = re.search('src="(.+?)"', s.group(0)).group(1)
+        str_url = "\\href{"+link+"}{Link to Video.}"+nl
         textbody = textbody.replace(s.group(0), str_url)
 
     return textbody
