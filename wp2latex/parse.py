@@ -49,7 +49,7 @@ class Post:
 
     def adjust_paths(self, attachments=None, prefix=''):
         if prefix is not '' and not prefix.endswith('/'):
-            print("[ERRR] Your attachment prefix does not end in a trailing slash")
+            print("[ERROR] Your attachment prefix does not end in a trailing slash")
             return False
         if self.body is not None and attachments is not None:
             for attachment in attachments:

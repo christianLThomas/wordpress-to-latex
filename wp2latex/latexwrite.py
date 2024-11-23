@@ -16,11 +16,17 @@ import os
 import re
 from datetime import datetime
 import pytz
+import logging
+
+
+logger = logging.getLogger("latexwrite")
+
+
 
 try:
-    import get_image_size
+    import imagesize
 except:
-    print("get_image_size not installed. Image sizes may not be read correctly.")
+    print("imagesize not installed. Image sizes may not be read correctly.")
 
 nl = "\n"
 horizontal_rule = '\\noindent\\rule{\\textwidth}{0.4pt}\\vspace{2.5mm}'
@@ -195,12 +201,12 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
             fignums.append(figcounter)
             figpaths.append(figpath)
             try:
-                figwidth, figheight = get_image_size.get_image_size(figpath)
+                figwidth, figheight = imagesize.get(figpath)
             except:
                 figwidth, figheight = jpeg_res(figpath)
-            try:
-                figcaption = re.search('<figcaption>(.+?)</figcaption>', s.group(0)).group(1)
-            except: # no captions
+            #try:
+                #     figcaption = re.search('<figcaption>(.+?)</figcaption>', s.group(0)).group(1)
+            #except: # no captions
                 figcaption = ''
             figcaptions.append(figcaption)
 
@@ -276,7 +282,7 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
                     replacestr[nl+nl+allimgstr[ifig+1]] = " [\\ref{fig:"+str(fignums[ifig+1])+"}]"+nl+nl+str_fig
                     loopfigs[ifig] = 0
                     loopfigs[ifig+1] = 2
-                elif loopfigs[ifig+1] == -1:
+                elif ((len(loopfigs) == (ifig+1))  or ( loopfigs[ifig+1] == -1)): 
                     break
 
     for key in replacestr:
@@ -284,13 +290,13 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
 
     if len(replacestr) != 0:
         # Correct labels that have ended up beneath figures rather in in textbody:
-        for s in re.finditer('end{figure} \[\\\\ref{fig:(.+?)}]', textbody):
+        for s in re.finditer('end{figure} \\[\\\\ref{fig:(.+?)}\\]', textbody):
             num = s.group(1)
             textbody = textbody.replace('[\\ref{fig:'+str(int(num)-1)+'}]', 
                                 '[\\ref{fig:'+str(int(num)-1)+'}] ' + '[\\ref{fig:'+str(int(num))+'}] ')
             textbody = textbody.replace('[\\ref{fig:'+str(int(num))+'}]', '')
 
-        for s in re.finditer('end{figure}\\n \[\\\\ref{fig:(.+?)}]', textbody):
+        for s in re.finditer('end{figure}\\n \\[\\\\ref{fig:(.+?)}\\]', textbody):
             num = s.group(1)
             textbody = textbody.replace('[\\ref{fig:'+str(int(num)-1)+'}]', 
                                 '[\\ref{fig:'+str(int(num)-1)+'}] ' + '[\\ref{fig:'+str(int(num))+'}] ')
@@ -333,7 +339,7 @@ def _include_subfigures(figpath1, figpath2, fignum1, fignum2, figcaption1, figca
     return str_fig
 
 
-def post_to_latex(f, post, figcounter, media_archive='', fig_layout='optimal', end_document=False):
+def post_to_latex(f, post, posts, attachments, figcounter, media_archive='', fig_layout='optimal', show_image_refs=True, end_document=False):
     """Puts the main text body through all the conversions it should
     need to successfully write to a .tex file that can be compiled
     without any further editing.
@@ -374,6 +380,10 @@ def post_to_latex(f, post, figcounter, media_archive='', fig_layout='optimal', e
         wp_blocks = True
         newbody = wp_blocks_to_latex(newbody)
     # Fix references to images:
+    # gallery ????
+
+    newbody = unpack_gallery(newbody, attachments, figcounter)
+
     if not media_archive == '':
         newbody, figcounter = image_to_latex(newbody, media_archive, figcounter, layout=fig_layout, wp_blocks=wp_blocks)
     # Fix URLs and symbols:
@@ -381,6 +391,9 @@ def post_to_latex(f, post, figcounter, media_archive='', fig_layout='optimal', e
     newbody = symbols_to_latex(newbody)
     # Replace HTML tags:
     newbody = html_tags_to_latex(newbody)
+    # print(newbody)
+    newbody = hideImageRefs(newbody, False)
+    #print(newbody)
     # Update lists:
     newbody = newbody.replace("<ul>", "\\begin{itemize}")
     newbody = newbody.replace("</ul>", "\\end{itemize}")
@@ -388,6 +401,7 @@ def post_to_latex(f, post, figcounter, media_archive='', fig_layout='optimal', e
     newbody = newbody.replace(3*nl, 2*nl).replace(3*nl, 2*nl).replace(3*nl, 2*nl)
     # Fix single-line picture references:
     newbody = newbody.replace(nl+nl+'[\\ref{fig', '[\\ref{fig')
+    
 
     # Finally write the adjusted text body:
     f.write("\\section{"+post.title+"}"+nl)
@@ -408,6 +422,45 @@ def post_to_latex(f, post, figcounter, media_archive='', fig_layout='optimal', e
 
     return figcounter
 
+def unpack_gallery(textbody, attachments, fignumber):
+    matches = re.findall("\\[gallery.*\\]", textbody)
+    for match in matches:
+        print("====== " + match + " ======")
+        numberMatches = re.findall('[0-9]+', match)
+        imageIds = [int(x) for x in numberMatches]
+        replacement = ""
+        imagePaths = []
+        for id in imageIds:
+            post = findImagePostByID(attachments, id)
+            if (post != "") :
+                imagePaths.append(attachment2ImagePath(post))
+            else:
+                logger.warning("Could not find post %s", id)
+        n = len(imagePaths) 
+        i=0
+        while (i < n):
+            if (n-i > 1): 
+                replacement += _include_subfigures(imagePaths[i], imagePaths[i+1], fignumber, fignumber + 1,
+                                                  "", "", "0.45", "0.45") 
+                i +=2
+                fignumber += 2
+            else:
+                replacement += _include_figure(imagePaths[i], fignumber, "")
+                fignumber = fignumber + 1
+
+        textbody = textbody.replace(match, replacement)       
+    return textbody
+
+def findImagePostByID(posts, id):
+    idStr = str(id)
+    for post in posts:
+        if (post.id == idStr):
+            return post 
+    return ""
+
+def attachment2ImagePath(attachment):
+    imageFile = str(attachment.url).replace("https://www.outofthemiryblog.com/wordpress/", "/home/clt/Projects/Blog2Book/")
+    return imageFile
 
 def symbols_to_latex(textbody):
     """Replaces common punctuation and currency symbols with LaTeX equivalents.
@@ -432,13 +485,27 @@ def urls_to_latex(textbody):
 
     for s in re.finditer('<a href=(.+?)/a>', textbody):
         url = re.search('"(.+?)"', s.group(0)).group(1)
-        des = re.search('>(.+?)<', s.group(0)).group(1)
+        des = re.search('>(.*)<', s.group(0)).group(1)
         #str_url = "\\begin{center}"+nl+"\\href{"+url+"}{"+des+"}"+nl+"\\end{center}"+nl
+        if (len(des) == 0) :
+            des = url
         str_url = "\\href{"+url+"}{"+des+"}"+nl
         textbody = textbody.replace(s.group(0), str_url)
-
     return textbody
 
+def hideImageRefs(textbody, show_image_refs):
+        if (show_image_refs):
+            return textbody
+        textbody = re.sub("<a href=\"https:.*jpg\">","", textbody)
+        textbody = re.sub("</a>", "", textbody)
+        textbody = re.sub("\\[\\\\ref{.*}\\]","", textbody)
+        textbody = re.sub("\\\\&nbsp;", "", textbody)
+        return textbody
+
+def hideHtml(textbody):
+        textbody = re.sub("\\[\\\\ref{.*}\\]","", textbody)
+        return textbody
+        
 
 def wp_blocks_to_latex(textbody):
 
