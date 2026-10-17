@@ -8,6 +8,7 @@ Adjusted for wordpress-to-latex by R. L. Bailey (GitHub bairaelyn), April 2020.
 from lxml import etree
 from progressbar import ProgressBar, Percentage, Bar
 from dateutil import parser, tz
+from typing import List
 
 import re
 import unidecode
@@ -48,7 +49,7 @@ class Post:
         self.comments = []
 
     def adjust_paths(self, attachments=None, prefix=''):
-        if prefix is not '' and not prefix.endswith('/'):
+        if prefix != '' and not prefix.endswith('/'):
             print("[ERROR] Your attachment prefix does not end in a trailing slash")
             return False
         if self.body is not None and attachments is not None:
@@ -73,7 +74,9 @@ class Attachment:
                 f.write(attachment.content)
                 f.close()
             else:
-                attachment.raise_for_status()
+                attachment.raise_for_status()   
+
+
 
 
 def extract_blog_from_XML(filename, localtime="America/Chicago", published=True, download=True):
@@ -86,8 +89,9 @@ def extract_blog_from_XML(filename, localtime="America/Chicago", published=True,
     tags = find_tags(tree, namespaces)
     posts = find_posts(tree, namespaces, localtime=localtime, published=published)
     attachments = find_attachments(tree, namespaces, download=download)
+    captions = find_captions(posts)
 
-    return tree, namespaces, blogs, authors, tags, posts, attachments
+    return tree, namespaces, blogs, authors, tags, posts, attachments, captions
 
 
 def find_blog(tree):
@@ -197,6 +201,26 @@ def find_attachments(tree, namespaces, download=True):
     else:
         print("[WARN] Found no attachments!")
         return False
+
+
+def find_captions(posts: List[Post]):
+    captions = {}
+    for post in posts:
+        text = post.body
+        matches = re.findall("\\[caption.*\\]", text)
+        for match in matches:
+            result = re.findall("a>(.*)\\[/caption", match)
+            if (len(result) != 1):
+                print("Did not match caption text in " + match)
+                continue
+            captionText = result[0]
+            result = re.findall('id="(.*)" align', match)
+            if (len(result) != 1):
+                print("Did not match caption ID in " + match)
+                continue
+            capID = result[0].split("_",1)[1]
+            captions[capID] = captionText
+    return captions            
 
 
 def slugify(string):

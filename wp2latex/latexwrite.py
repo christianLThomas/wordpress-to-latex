@@ -17,7 +17,7 @@ import re
 from datetime import datetime
 import pytz
 import logging
-
+from typing import List
 
 logger = logging.getLogger("latexwrite")
 
@@ -59,7 +59,9 @@ def latex_preamble(f, title, author, abstract):
     f.write("\\usepackage{eurosym}"+nl)
     f.write("\\usepackage{subcaption}"+nl)
     f.write("\\usepackage{cleveref}"+nl)
-    f.write("\\captionsetup[subfigure]{subrefformat=simple,labelformat=simple}"+nl)
+    f.write("\\usepackage{float}"+nl)
+    f.write("\\usepackage[section]{placeins}" + nl)
+#    f.write("\\captionsetup[subfigure]{subrefformat=simple,labelformat=simple}"+nl)
     f.write("\\renewcommand\\thesubfigure{(\\alph{subfigure})}"+nl)
     f.write("\\setlrmarginsandblock{0.12\\paperwidth}{*}{1}"+nl)
     f.write("\\setulmarginsandblock{0.15\\paperwidth}{*}{1}"+nl)
@@ -137,7 +139,7 @@ def html_tags_to_latex(textbody):
     return textbody
 
 
-def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layout='optimal', wp_blocks=False):
+def image_to_latex(textbody, media_archive, figcounter, captions, fws=['0.5','0.4'], layout='optimal', wp_blocks=False):
     """Replaces image references in textbody with LaTeX figure/subfigure code.
     Original image string looks like this:
     <img class="alignnone size-full wp-image-24" src="http://assets.mysite.com/img/dsc04657-edited.jpg" 
@@ -183,11 +185,12 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
     if wp_blocks == False:
         re_img_str = '<img(.+?)>'
     else:
-        re_img_str = '<!-- wp:image (.+?)-->\n(.+?)\n<!-- /wp:image -->'
+        re_img_str = '<!-- wp:image (.+?)-->\n(.+?)\n<!-- /wp:image -->.*'
 
     for s in re.finditer(re_img_str, textbody):
         laststr, lastfigpath, lastfigcaption = str_fig, figpath, figcaption
         img_exists = False
+        figcaption = ''
         try:
             n = re.search('src="(.+?)"', s.group(0)).group(1)
             nfile = os.path.split(n)[-1].split('?')[0]
@@ -207,6 +210,10 @@ def image_to_latex(textbody, media_archive, figcounter, fws=['0.5','0.4'], layou
             #try:
                 #     figcaption = re.search('<figcaption>(.+?)</figcaption>', s.group(0)).group(1)
             #except: # no captions
+            capID = s.group(0).split("wp-image-")[1].split('"')[0]
+            if capID in captions:
+                figcaption = captions[capID]
+            else:
                 figcaption = ''
             figcaptions.append(figcaption)
 
@@ -311,7 +318,7 @@ def _include_figure(figpath, fignum, figcaption, figwidth=0.5):
     str_fig += "    \\centering"+nl
     str_fig += "    \\includegraphics[width="+str(figwidth)+"\\textwidth]{"+figpath+"}"+nl
     str_fig += "    \\caption{"+figcaption+"}"+nl
-    str_fig += "    \\label{fig:"+str(fignum)+"}"+nl
+    #str_fig += "    \\label{fig:"+str(fignum)+"}"+nl
     str_fig += "\\end{figure}"
 
     return str_fig
@@ -324,22 +331,22 @@ def _include_subfigures(figpath1, figpath2, fignum1, fignum2, figcaption1, figca
     str_fig += "  \\begin{subfigure}[t]{"+fw1+"\\textwidth}"+nl
     str_fig += "    \\includegraphics[width=\\textwidth]{"+figpath1+"}"+nl
     str_fig += "    \\caption{"+figcaption1+"}"+nl
-    str_fig += "    \\label{fig:"+str(fignum1)+"}"+nl
+#    str_fig += "    \\label{fig:"+str(fignum1)+"}"+nl
     str_fig += "  \\end{subfigure}"+nl
     str_fig += "  \\begin{subfigure}[t]{"+fw2+"\\textwidth}"+nl
     str_fig += "    \\includegraphics[width=\\textwidth]{"+figpath2+"}"+nl
     str_fig += "    \\caption{"+figcaption2+"}"+nl
-    str_fig += "    \\label{fig:"+str(fignum2)+"}"+nl
+#    str_fig += "    \\label{fig:"+str(fignum2)+"}"+nl
     str_fig += "  \\end{subfigure}"+nl
     str_fig += "  \\caption{"+nl
-    str_fig += "  \\label{fig:"+str(fignum1)+"-"+str(fignum2)+"}"+nl
+ #   str_fig += "  \\label{fig:"+str(fignum1)+"-"+str(fignum2)+"}"+nl
     str_fig += "  }"+nl
     str_fig += "\\end{figure}"+nl
 
     return str_fig
 
 
-def post_to_latex(f, post, posts, attachments, figcounter, media_archive='', fig_layout='optimal', show_image_refs=True, end_document=False):
+def post_to_latex(f, post, posts, attachments, figcounter, captions, media_archive='', fig_layout='optimal', show_image_refs=True, end_document=False):
     """Puts the main text body through all the conversions it should
     need to successfully write to a .tex file that can be compiled
     without any further editing.
@@ -382,10 +389,10 @@ def post_to_latex(f, post, posts, attachments, figcounter, media_archive='', fig
     # Fix references to images:
     # gallery ????
 
-    newbody = unpack_gallery(newbody, attachments, figcounter)
+    newbody, figcounter = unpack_gallery(newbody, attachments, figcounter, captions)
 
     if not media_archive == '':
-        newbody, figcounter = image_to_latex(newbody, media_archive, figcounter, layout=fig_layout, wp_blocks=wp_blocks)
+        newbody, figcounter = image_to_latex(newbody, media_archive, figcounter, captions, layout=fig_layout, wp_blocks=wp_blocks)
     # Fix URLs and symbols:
     newbody = urls_to_latex(newbody)
     newbody = symbols_to_latex(newbody)
@@ -400,8 +407,16 @@ def post_to_latex(f, post, posts, attachments, figcounter, media_archive='', fig
     # Remove excessive newlines, but never less than two:
     newbody = newbody.replace(3*nl, 2*nl).replace(3*nl, 2*nl).replace(3*nl, 2*nl)
     # Fix single-line picture references:
-    newbody = newbody.replace(nl+nl+'[\\ref{fig', '[\\ref{fig')
-    
+    #newbody = newbody.replace(nl+nl+'[\\ref{fig', '[\\ref{fig')
+    newbody = newbody.replace(nl+nl+'[\\ref{fig', '')
+    newbody = newbody.replace(' ','')
+    newbody = re.sub('\\[caption .*\\]', '', newbody)
+    newbody = re.sub('<a href.*>', '', newbody, 99)
+
+    for s in re.findall('<a href\\[caption .*\\]', newbody):
+        print("############################################")
+        print(s)
+        print("############################################")
 
     # Finally write the adjusted text body:
     f.write("\\section{"+post.title+"}"+nl)
@@ -422,13 +437,13 @@ def post_to_latex(f, post, posts, attachments, figcounter, media_archive='', fig
 
     return figcounter
 
-def unpack_gallery(textbody, attachments, fignumber):
+def unpack_gallery(textbody, attachments, fignumber, captions) :
+
     matches = re.findall("\\[gallery.*\\]", textbody)
     for match in matches:
-        print("====== " + match + " ======")
         numberMatches = re.findall('[0-9]+', match)
         imageIds = [int(x) for x in numberMatches]
-        replacement = ""
+        replacement = nl
         imagePaths = []
         for id in imageIds:
             post = findImagePostByID(attachments, id)
@@ -447,9 +462,10 @@ def unpack_gallery(textbody, attachments, fignumber):
             else:
                 replacement += _include_figure(imagePaths[i], fignumber, "")
                 fignumber = fignumber + 1
+                i += 1
 
         textbody = textbody.replace(match, replacement)       
-    return textbody
+    return textbody, fignumber
 
 def findImagePostByID(posts, id):
     idStr = str(id)
@@ -500,6 +516,7 @@ def hideImageRefs(textbody, show_image_refs):
         textbody = re.sub("</a>", "", textbody)
         textbody = re.sub("\\[\\\\ref{.*}\\]","", textbody)
         textbody = re.sub("\\\\&nbsp;", "", textbody)
+        textbody = re.sub("\\\\href{.*}{ *}", "", textbody)
         return textbody
 
 def hideHtml(textbody):
